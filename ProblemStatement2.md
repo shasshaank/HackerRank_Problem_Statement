@@ -26,7 +26,7 @@ Here is an example of a successful response JSON object:
 ```
 The application should adhere to the following API format and response codes in QueryController (or views.py):
 
-POST /api/queries/execute/:
+#POST /api/queries/execute/:
 
 The request body will have a client_id, query, and tier.
 

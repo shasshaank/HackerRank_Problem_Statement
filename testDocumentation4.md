@@ -1,48 +1,157 @@
-# Test Case Documentation: Circuit Breaker Middleware
+# Test Case Specification
 
-The following test scenarios validate the state transitions and caching requirements of the Circuit Breaker implementation.
+## Circuit Breaker Middleware
 
-### Test Case 1: Normal Operation (Closed State)
-**Objective**: Ensure middleware passes requests when error count is low.
-1.  **Action**: Send 4 requests where the mocked View raises `HTTP 500`.
-2.  **Action**: Send 1 request where the mocked View returns `HTTP 200`.
-3.  **Assertion**: The 5th request returns `200`.
-4.  **Assertion**: The failure counter in the cache is reset to 0 (implied, or explicitly checked if cache key is standardized).
+### Coverage Matrix
+| ID    | Title                      | Type        | Priority | Edge Case |
+|-------|----------------------------|-------------|----------|-----------|
+| TC-01 | Normal Operation Flow      | Functional  | P0       | No        |
+| TC-02 | Threshold Limit Trigger    | Functional  | P0       | No        |
+| TC-03 | Open State Rejection       | Functional  | P0       | No        |
+| TC-04 | Cooling Period Enforcement | Logic       | P0       | Yes       |
+| TC-05 | Half-Open Recovery Success | Logic       | P1       | Yes       |
+| TC-06 | Half-Open Failure Relapse  | Logic       | P1       | Yes       |
+| TC-07 | Scope Isolation            | Functional  | P1       | No        |
+| TC-08 | Statelessness (Cache Use)  | Architecture| P0       | No        |
+| TC-09 | Concurrency Safety         | Concurrency | P2       | Yes       |
+| TC-10 | Configuration Validation   | Validation  | P2       | No        |
 
-### Test Case 2: Tripping the Circuit (Closed -> Open)
-**Objective**: Validate the failure threshold triggers the block.
-1.  **Action**: Send 5 consecutive requests where the mocked View raises `HTTP 500`.
-2.  **Action**: Send a 6th request.
-3.  **Assertion**: The 6th request returns `HTTP 503` immediately.
-4.  **Assertion**: The View logic was NOT executed for the 6th request (verify via `mock_view.call_count`).
+Coverage: 10 test cases | Functional: 4 | Logic: 3 | Architecture: 1 | Concurrency: 1 | Validation: 1
 
-### Test Case 3: Cooling Period (Open State Persistence)
-**Objective**: Ensure the block persists for the full duration.
-1.  **Setup**: Trip the circuit (State: OPEN).
-2.  **Action**: Advance system time by 30 seconds (halfway through timeout).
-3.  **Action**: Send a request.
-4.  **Assertion**: Returns `HTTP 503`.
-5.  **Assertion**: The response body contains `retry_after` ≈ 30.
+---
 
-### Test Case 4: Half-Open Recovery (Open -> Closed)
-**Objective**: Validate successful recovery.
-1.  **Setup**: Trip the circuit. Advance system time by 61 seconds.
-2.  **Action**: Send 1 request where the mocked View returns `HTTP 200` (The "Probe").
-3.  **Assertion**: Request returns `HTTP 200`.
-4.  **Action**: Send subsequent requests.
-5.  **Assertion**: Requests pass through normally (State is CLOSED).
+## Test Cases
 
-### Test Case 5: Half-Open Failure (Open -> Half-Open -> Open)
-**Objective**: Validate re-tripping on failed recovery.
-1.  **Setup**: Trip the circuit. Advance system time by 61 seconds.
-2.  **Action**: Send 1 request where the mocked View raises `HTTP 500` (The "Probe").
-3.  **Assertion**: Request returns `HTTP 500` (passed through from view).
-4.  **Action**: Send immediate next request.
-5.  **Assertion**: Returns `HTTP 503` (State returned to OPEN).
-6.  **Assertion**: The 60-second timer has restarted.
+### TC-01: Normal Operation Flow
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Functional                                                                  |
+| Purpose    | Verify middleware passes requests when failure count is below threshold       |
+| Input      | 1. Send 4 requests (Mock View raises 500). 2. Send 1 request (View returns 200). |
+| State      | Circuit: CLOSED. Failure Count: 0.                                          |
+| Expected   | 1. First 4 requests return 500. 2. 5th request returns 200. 3. Failure count resets to 0. |
+| Status Code| 200                                                                         |
+| Validates  | Basic pass-through behavior and counter reset logic                         |
 
-### Hidden Constraint Check: Thread Safety & Statelessness
-**Objective**: Ensure `django.core.cache` was used instead of global variables.
-1.  **Action**: Inspect `django.core.cache`.
-2.  **Assertion**: Keys related to the circuit breaker (e.g., `circuit_failure_count`, `circuit_open_until`) exist in the cache.
-3.  **Reason**: Global python variables (e.g., `FAILURE_COUNT = 0` at module level) will fail in production (Gunicorn/uWSGI workers). The solution **must** use the Cache backend.
+### TC-02: Threshold Limit Trigger
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Functional                                                                  |
+| Purpose    | Verify the circuit trips exactly at the configured threshold                |
+| Input      | Send 6 consecutive requests (Mock View raises 500).                         |
+| State      | Circuit: CLOSED. Threshold: 5.                                              |
+| Expected   | 1. Requests 1-5 return 500 (passed from view). 2. Request 6 returns 503 (Generated by Middleware). 3. View is NOT called for Req 6. |
+| Status Code| 503                                                                         |
+| Validates  | State transition from CLOSED -> OPEN                                        |
+
+### TC-03: Open State Rejection
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Functional                                                                  |
+| Purpose    | Verify all requests are blocked immediately when circuit is Open            |
+| Input      | Send GET /api/resource/                                                     |
+| State      | Circuit: OPEN. Time remaining: 50s.                                         |
+| Expected   | Return 503 Service Unavailable. Response body contains "retry_after".       |
+| Status Code| 503                                                                         |
+| Validates  | Circuit blocking logic                                                      |
+
+### TC-04: Cooling Period Enforcement
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Logic                                                                       |
+| Purpose    | Verify the circuit remains Open for the full duration of the timeout        |
+| Input      | 1. Trip Circuit. 2. Advance time by 59 seconds. 3. Send Request.            |
+| State      | Circuit: OPEN. Timeout: 60s.                                                |
+| Expected   | Request is rejected with 503. State remains OPEN.                           |
+| Status Code| 503                                                                         |
+| Validates  | Time-based state management                                                 |
+
+### TC-05: Half-Open Recovery Success
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Logic                                                                       |
+| Purpose    | Verify successful probe request resets the circuit                          |
+| Input      | 1. Trip Circuit. 2. Advance time by 61 seconds. 3. Send Request (View returns 200). |
+| State      | Circuit: HALF-OPEN (Transitioned from OPEN).                                |
+| Expected   | 1. Request returns 200. 2. Circuit state updates to CLOSED. 3. Cache failure count cleared. |
+| Status Code| 200                                                                         |
+| Validates  | State transition OPEN -> HALF-OPEN -> CLOSED                                |
+
+### TC-06: Half-Open Failure Relapse
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Logic                                                                       |
+| Purpose    | Verify failed probe request restarts the cooling timer                      |
+| Input      | 1. Trip Circuit. 2. Advance 61s. 3. Send Req (View raises 500). 4. Send Req immediately. |
+| State      | Circuit: HALF-OPEN.                                                         |
+| Expected   | 1. First request returns 500 (Probe failed). 2. Second request returns 503. 3. Timer resets to 60s. |
+| Status Code| 503                                                                         |
+| Validates  | State transition HALF-OPEN -> OPEN                                          |
+
+### TC-07: Scope Isolation
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Functional                                                                  |
+| Purpose    | Verify middleware does not block unrelated endpoints                        |
+| Input      | Send GET /api/health-check/ (Different URL)                                 |
+| State      | Circuit: OPEN (for /api/resource/).                                         |
+| Expected   | Request returns 200 OK. Middleware ignores this path.                       |
+| Status Code| 200                                                                         |
+| Validates  | URL matching logic                                                          |
+
+### TC-08: Statelessness (Cache Use)
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Architecture                                                                |
+| Purpose    | Verify state is stored in Django Cache, not global variables                |
+| Input      | Inspect `django.core.cache` backend after tripping circuit.                 |
+| State      | Circuit: OPEN.                                                              |
+| Expected   | Cache contains keys (e.g., `circuit:failure_count`, `circuit:open_until`).  |
+| Status Code| N/A                                                                         |
+| Validates  | Deployment architecture compliance (Multi-worker safety)                    |
+
+### TC-09: Concurrency Safety
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Concurrency                                                                 |
+| Purpose    | Verify multiple simultaneous requests in Half-Open state don't leak         |
+| Input      | Send 5 concurrent requests when state is HALF-OPEN.                         |
+| State      | Circuit: HALF-OPEN.                                                         |
+| Expected   | Exactly 1 request hits the view. 4 requests return 503.                     |
+| Status Code| Mixed                                                                       |
+| Validates  | Race condition handling in state transitions                                |
+
+### TC-10: Configuration Validation
+| Field      | Value                                                                       |
+|------------|-----------------------------------------------------------------------------|
+| Type       | Validation                                                                  |
+| Purpose    | Verify hardcoded constraints (5 failures, 60s timeout) are respected        |
+| Input      | System Inspection                                                           |
+| Expected   | Code uses constants/settings for `5` and `60`, not magic numbers.           |
+| Status Code| N/A                                                                         |
+| Validates  | Maintainability and Spec Compliance                                         |
+
+## Validation Rules
+| Field         | Rule                          | Error Message (Response Body)          |
+|---------------|-------------------------------|----------------------------------------|
+| Fail Count    | Max 5 consecutive             | N/A (Internal Logic)                   |
+| Timeout       | 60 Seconds                    | `{"retry_after": <int>}`               |
+| Response Code | Must be 503 when Open         | `{"error": "Circuit is open"}`         |
+
+## Test Execution
+**Phase 1 (Core):** TC-01, TC-02, TC-03, TC-07  
+**Phase 2 (Logic):** TC-04, TC-05, TC-06  
+**Phase 3 (Architecture):** TC-08, TC-09, TC-10  
+
+**Pass Criteria:** Minimum 7/10 test cases must pass  
+**Excellent:** 10/10 test cases pass with correct Cache implementation
+
+## Scoring Rubric
+| Category          | Points | Criteria                                                |
+|-------------------|--------|---------------------------------------------------------|
+| State Machine     | 30     | TC-01, TC-02, TC-03 pass. Transitions logic is correct. |
+| Cache Usage       | 25     | Uses `django.core.cache` correctly (TC-08).             |
+| Recovery Logic    | 20     | TC-05 & TC-06 pass (Half-Open handling).                |
+| Middleware impl   | 15     | Correct `process_request` implementation.               |
+| Code Quality      | 10     | Clean separation of concerns and constants.             |
+| **Total** | **100**|                                                         |

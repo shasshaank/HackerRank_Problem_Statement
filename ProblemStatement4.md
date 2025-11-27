@@ -1,52 +1,70 @@
+
 # Django Middleware: Service Circuit Breaker
 
-In this challenge, you are architecting a stability layer for a high-traffic microservice.
+Your task is to implement a **Circuit Breaker Middleware** that provides stability for a high-traffic microservice.
 
-Your task is to implement a **Circuit Breaker Middleware** that monitors the health of a specific API endpoint. If the underlying service fails repeatedly, the middleware must "trip the circuit" and reject subsequent requests immediately to prevent cascading failures.
+The middleware must monitor the health of the `/api/resource/` endpoint. If the underlying service fails repeatedly (HTTP 500), the middleware must "trip the circuit" and reject subsequent requests immediately to prevent cascading failures.
 
-The view `UnstableDataProvider` (mapped to `/api/resource/`) is provided. It simulates a flaky backend service that randomly returns **HTTP 200** or raises **HTTP 500** errors.
+**Entities**
 
-**Functional Specification**
+The Middleware returns a specific JSON object when the circuit is **OPEN** (Blocking requests):
 
-The Middleware must implement a State Machine with three distinct states: **CLOSED**, **OPEN**, and **HALF-OPEN**.
+* **error**: string description.
+* **retry_after**: integer (seconds remaining until the circuit attempts recovery).
 
-**1. State: CLOSED (Normal Operation)**
-* **Behavior**: Requests pass through to the view normally.
-* **Failure Monitoring**: The middleware must track consecutive failures (HTTP 500 responses) from the view.
-* **Transition**: If **5 consecutive failures** occur, the circuit trips to **OPEN**.
+**Sample Error JSON:**
+```json
+{
+  "error": "Circuit is open",
+  "retry_after": 45
+}
+```
 
-**2. State: OPEN (Failure Mode)**
-* **Behavior**: The middleware intercepts **all** incoming requests to `/api/resource/`. It must immediately return **HTTP 503 Service Unavailable** without invoking the view.
-* **Duration**: The circuit remains OPEN for a cooling period of **60 seconds**.
-* **Transition**: After 60 seconds have elapsed, the circuit transitions to **HALF-OPEN**.
-
-**3. State: HALF-OPEN (Recovery Mode)**
-* **Behavior**: The middleware allows **exactly one** request to pass through to the view to test service health. All other concurrent requests continue to receive **HTTP 503**.
-* **Transition (Success)**: If the test request returns **HTTP 200**, the circuit resets to **CLOSED** (failure count reset to 0).
-* **Transition (Failure)**: If the test request returns **HTTP 500**, the circuit immediately trips back to **OPEN**, and the 60-second timer restarts.
 
 **API Specification**
 
-**GET /api/resource/**
+**1. GET /api/users/**:
 
-* **Scenario A (Circuit Closed)**:
-    * Returns upstream data.
-    * Response Code: **200 OK** (or **500 Internal Server Error** if upstream fails).
+- #### Normal Operation (Closed State):
 
-* **Scenario B (Circuit Open)**:
-    * Request is blocked by Middleware.
-    * Response Code: **503 Service Unavailable**.
-    * Response Body: `{"error": "Circuit is open", "retry_after": <seconds_remaining>}`.
+   - Pass the request through to the view.
 
-**Technical Constraints**
+   - Side-Effect: If the view raises an HTTP 500 error, increment the failure counter in the cache.
 
-* **State Persistence**: Circuit state (failure counts, timestamps) must be stored using **Django's default Cache backend** (`django.core.cache`). You cannot use global variables or database models, as the solution must be stateless across application processes.
-* **Scope**: The middleware must only act on the `/api/resource/` path. All other endpoints should be unaffected.
-* **Configuration**:
-    * Failure Threshold: **5**
-    * Recovery Timeout: **60 seconds**
+   - Response code depends on the upstream view (200 or 500)
 
-**Provided Resources**
+- #### Failure Threshold (Tripping the Circuit):
 
-* `views.py`: Contains the `UnstableDataProvider`. Do not modify this file.
-* `settings.py`: Configured with `LocMemCache` for testing.
+-   Condition: If 5 consecutive requests result in HTTP 500 errors.
+    
+-   Side-Effect: Transition state to OPEN. All subsequent requests must be blocked immediately without touching the view.
+        
+-   Response code becomes 503.
+    
+
+- #### Blocking (Open State):
+
+-   Constraint: The circuit remains OPEN for 60 seconds.
+    
+-   Returns the Error JSON with `retry_after` calculated dynamically.
+    
+-   Response code is 503.
+    
+
+- #### Recovery (Half-Open State):
+
+-   Condition: After 60 seconds, allow exactly one request to pass through.
+    
+-   Side-Effect (Success): If that request returns 200, reset failure count to 0 (State: CLOSED).
+    
+-   Side-Effect (Failure): If that request returns 500, reset the timer to 60s (State: OPEN).
+    
+-   Returns status code **200**.
+    
+
+**Technical Constraints**:
+
+-  **State Persistence**: Circuit state (failure counts, timestamps) must be stored using Django's default Cache backend (`django.core.cache`). Do not use global variables.
+
+-  **Scope Isolation** : The middleware must only act on the `/api/resource/` path. All other endpoints must remain unaffected.
+

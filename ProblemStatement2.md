@@ -11,39 +11,11 @@ Here is an example of a request JSON object:
   "query": "SELECT * FROM users JOIN orders ON users.id = orders.uid",
   "tier": "PREMIUM"
 }
+```
 
 Here is an example of a successful response JSON object:
 
-JSON
-
-{
-  "status": "ACCEPTED",
-  "remaining_budget": 80,
-  "cost_deducted": 50,
-  "message": "Query queued for execution"
-}
-
-I apologize for the confusion. Here is the raw text for both files. You can copy the content inside the code blocks directly into your GitHub files.
-
-1. problemStatement.md
-Markdown
-
-# Django REST Framework: Smart Query Cost Optimizer API
-
-In this project, you are building a **Query Execution Service** where clients execute SQL queries against a database. Clients have a credit balance and are charged for every query they run.
-
-The system must estimate the cost of a query, enforce budget limits based on the client's tier, and **safely handle concurrent requests** to prevent "double spending" (race conditions).
-
-Here is an example of a request JSON object:
 ```json
-{
-  "client_id": "CLIENT_123",
-  "query": "SELECT * FROM users JOIN orders ON users.id = orders.uid",
-  "tier": "PREMIUM"
-}
-Here is an example of a successful response JSON object:
-
-json
 
 {
   "status": "ACCEPTED",
@@ -51,6 +23,7 @@ json
   "cost_deducted": 50,
   "message": "Query queued for execution"
 }
+```
 The application should adhere to the following API format and response codes in QueryController (or views.py):
 
 POST /api/queries/execute/:

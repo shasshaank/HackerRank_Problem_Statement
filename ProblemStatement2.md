@@ -1,9 +1,7 @@
 
 # Django REST Framework: Smart Query Cost Optimizer API
 
-In this project, you are building a **Query Execution Service** where clients execute SQL queries against a database. Clients have a credit balance and are charged for every query they run.
-
-The system must estimate the cost of a query, enforce budget limits based on the client's tier, and **safely handle concurrent requests** to prevent "double spending" (race conditions).
+You are building a metered SQL query execution service. Clients consume credits from a prepaid balance to run queries. Your goal is to implement a robust API endpoint that calculates costs, enforces tier-based budget limits, and guarantees data consistency under high concurrency.
 
 Here is an example of a request JSON object:
 ```json
@@ -31,45 +29,24 @@ The application should adhere to the following API format and response codes in 
 
 - The request body will have a `client_id`, `query`, and `tier`.
 
-- **Determine Cost**: Check the query string. If it contains the word `"JOIN"` (case-insensitive), cost is 50. Otherwise, cost is 10.
+- *Pricing Logic*:
 
-- **Check Budget**:
+  - 50 Credits: If the query contains the keyword "JOIN" (case-insensitive).
 
-  - Standard Tier: Balance cannot go below 0.
+  - 10 Credits: All other queries.
 
-   - Premium Tier: Balance can go down to -100 (overdraft allowed).
+- **Tier Constraints**:
+  - STANDARD: Balance must remain $\ge 0$ after deduction.
+  - PREMIUM: Balance must remain $\ge -100$ after deduction.
 
-- **Execution**:
+- **Response Logic**:
 
-   - If `(Current Balance - Cost)` is valid according to the tier rules: Deduct cost, update balance, and return `status: "ACCEPTED"` with code 201.
+  - If balance is sufficient: Deduct cost, update balance, and return status: "ACCEPTED" with code 201.
 
-   - If budget is insufficient: Return `status: "REJECTED"`with code 403.
+  - If balance is insufficient: Return status: "REJECTED" with code 403.
 
-- **Optimization Hint**:
+  - *Edge Case*: If rejected due to insufficient funds, check if the query is missing the keyword "LIMIT". If missing, return status: "OPTIMIZATION_SUGGESTED" with code 200 instead of 403. (Cost deducted: 0).
 
-  - If budget is insufficient BUT the query is missing the word `"LIMIT"`, return `status: "OPTIMIZATION_SUGGESTED"` with code 200 instead of 403.
-
-  - The implementation must handle concurrent requests safely.
-
-   - Note: The `message` field in the response is informational only. The evaluation will NOT check the content of `message`. Only `status`, `remaining_budget`, `cost_deducted`, and `HTTP status code` will be validated.
-
-**Implementation Requirements**:
-
-- Complete the execute_query method in views.py.
-
-- **Concurrency**: You must ensure that two simultaneous requests do not deduct budget based on stale data. 
-
-- **Atomicity**: Budget updates must happen inside a transaction.
-
-- Do not modify the provided `Client` model structure.
-
-**Validation Rules**:
-
-- `client_id`: Must exist in the database.
-
-- `query`: Must be a non-empty string.
-
-- `tier`: Must be either "STANDARD" or "PREMIUM".
 
 
 **Cost Logic**:

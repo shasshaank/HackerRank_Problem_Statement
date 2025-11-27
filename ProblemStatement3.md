@@ -89,13 +89,11 @@ The application should adhere to the following API format and response codes in 
     
     -   Django Signals cannot access `request.user` directly.
         
-    -   You must implement a Middleware that captures the user from the request and stores it in thread-local storage so the Signals can access `changed_by`.
+    -   The AuditLog must record the username of the person making the change. Note that auditing happens in Signals, which do not natively have access to the request object. You must implement a thread-safe solution to pass the user context to the signal."
         
 -   **Signals (Automation):**
     
-    -   Use `pre_save` to fetch the "old" state of the object.
-        
-    -   Use `post_save` to compare "old" vs "new" state, generate the JSON diff, and save the `AuditLog`.
+    - The system must automatically detect changes to model fields and save the difference (Old vs New) to the log whenever .save() is called on a User instance.
         
 -   **Concurrency:**
     

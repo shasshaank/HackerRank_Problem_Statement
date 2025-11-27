@@ -42,7 +42,7 @@ The application should adhere to the following API format and response codes in 
 
 - If `(Current Balance - Cost)` is valid according to the tier rules: Deduct cost, update balance, and return `status: "ACCEPTED"` with code 201.
 
-- If budget is insufficient: Return status: "REJECTED" with code 403.
+- If budget is insufficient: Return `status: "REJECTED"`with code 403.
 
 - **Optimization Hint**:
 
